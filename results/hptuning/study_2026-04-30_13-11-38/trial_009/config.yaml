@@ -1,0 +1,27 @@
+data:
+  data_path: data/ml-1m
+  min_rating: 4.0
+  min_interactions: 5
+model:
+  embed_dim: 128
+  hidden_dim: 128
+  num_layers: 2
+  dropout: 0.3
+  max_seq_len: 50
+training:
+  batch_size: 256
+  lr: 0.0001
+  weight_decay: 0.0001
+  epochs: 20
+  patience: 10
+  eval_k: 10
+  device: cuda
+  num_workers: 4
+  pin_memory: true
+  use_amp: true
+debiasing:
+  loss_type: ce
+  trend_window_days: 30
+  max_weight: 10.0
+  use_alpha: true
+  use_beta: true

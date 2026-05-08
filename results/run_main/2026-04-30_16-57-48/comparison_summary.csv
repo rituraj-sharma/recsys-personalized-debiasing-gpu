@@ -1,0 +1,2 @@
+method,recall@10,ndcg@10,delta_gap_niche,delta_gap_diverse,delta_gap_blockbuster,avg_popularity,coverage,long_tail_ratio
+gru4rec_personalized,0.124793,0.06368,0.000783,0.000425,0.000683,0.001907,0.613643,0.11649

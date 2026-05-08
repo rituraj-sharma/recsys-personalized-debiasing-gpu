@@ -1,0 +1,10 @@
+{
+  "recall@10": 0.123467,
+  "ndcg@10": 0.062615,
+  "delta_gap_niche": 0.00075,
+  "delta_gap_diverse": 0.000379,
+  "delta_gap_blockbuster": 0.000646,
+  "avg_popularity": 0.001866,
+  "coverage": 0.585621,
+  "long_tail_ratio": 0.11649
+}

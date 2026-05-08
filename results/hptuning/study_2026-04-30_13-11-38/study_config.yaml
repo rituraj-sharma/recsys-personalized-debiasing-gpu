@@ -1,0 +1,7 @@
+n_trials: 30
+trial_epochs: 20
+fast_mode: false
+fast_ratio: null
+seed: 42
+dataset: data/ml-1m
+patience_during_tuning: 2

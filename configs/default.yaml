@@ -1,0 +1,30 @@
+data:
+  data_path: "data/ml-1m"
+  min_rating: 4.0
+  min_interactions: 5
+
+model:
+  embed_dim: 64
+  hidden_dim: 128
+  num_layers: 1
+  dropout: 0.2
+  max_seq_len: 50
+
+training:
+  batch_size: 256
+  lr: 0.001
+  weight_decay: 1.0e-5
+  epochs: 50
+  patience: 10
+  eval_k: 10
+  device: "cuda"        # falls back to cpu if cuda unavailable
+  num_workers: 4        # set to 0 on Windows if multiprocessing issues
+  pin_memory: true      # set to false when device is cpu
+  use_amp: true         # mixed precision; auto-disabled when device is cpu
+
+debiasing:
+  loss_type: "ce"       # "ce" | "ips" | "personalized"
+  trend_window_days: 30
+  max_weight: 10.0
+  use_alpha: true
+  use_beta: true
