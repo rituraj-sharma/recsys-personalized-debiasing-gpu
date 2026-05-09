@@ -51,11 +51,13 @@ class RunLogger:
         val_metrics: Dict[str, float],
         lr: float,
         epoch_time_sec: float,
+        grad_norm: float = None,
     ) -> None:
         """Append one row to train_log.csv.  Safe to call after a crash (append mode)."""
         row: Dict = {
             "epoch": epoch,
             "train_loss": round(train_loss, 6),
+            "grad_norm": round(grad_norm, 6) if grad_norm is not None else "",
             "lr": lr,
             "epoch_time_sec": round(epoch_time_sec, 1),
         }

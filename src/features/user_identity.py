@@ -133,9 +133,14 @@ def load_or_compute_identity(
     e_trend: Dict[int, Dict[int, float]],
     cache_dir: str = "data/cache",
     scorer_tag: str = "formula",
+    force: bool = False,
 ) -> IdentityScorer:
     os.makedirs(cache_dir, exist_ok=True)
     cache_path = os.path.join(cache_dir, f"identity_{scorer_tag}.pkl")
+
+    if force and os.path.exists(cache_path):
+        os.remove(cache_path)
+        print(f"[identity] Removed cache: {cache_path}")
 
     if os.path.exists(cache_path):
         with open(cache_path, "rb") as f:

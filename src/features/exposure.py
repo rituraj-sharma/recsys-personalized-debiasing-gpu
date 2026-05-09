@@ -79,10 +79,17 @@ def load_or_compute_exposures(
     train_seqs: Dict[int, List[Tuple[int, int]]],
     trend_window_days: int,
     cache_dir: str = "data/cache",
+    force: bool = False,
 ) -> Tuple[Dict[int, float], Dict[int, Dict[int, float]]]:
     os.makedirs(cache_dir, exist_ok=True)
     pop_path = os.path.join(cache_dir, "e_pop.pkl")
     trend_path = os.path.join(cache_dir, f"e_trend_W{trend_window_days}.pkl")
+
+    if force:
+        for p in (pop_path, trend_path):
+            if os.path.exists(p):
+                os.remove(p)
+                print(f"[exposure] Removed cache: {p}")
 
     if os.path.exists(pop_path):
         with open(pop_path, "rb") as f:

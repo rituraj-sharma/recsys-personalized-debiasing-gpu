@@ -105,7 +105,7 @@ class Trainer:
 
         for epoch in range(start_epoch, epochs + 1):
             t0 = time.time()
-            train_loss = self._train_epoch(train_loader, epoch)
+            train_loss, avg_grad_norm = self._train_epoch(train_loader, epoch)
             val_metrics = self._evaluate(val_loader, seen_items_train, val_ground_truths)
             epoch_time = time.time() - t0
 
@@ -114,7 +114,8 @@ class Trainer:
             current_lr = self.optimizer.param_groups[0]["lr"]
 
             if self.logger:
-                self.logger.log_epoch(epoch, train_loss, val_metrics, current_lr, epoch_time)
+                self.logger.log_epoch(epoch, train_loss, val_metrics, current_lr, epoch_time,
+                                      grad_norm=avg_grad_norm)
 
             tqdm.write(
                 f"Epoch {epoch:3d} | loss {train_loss:.4f} | "
@@ -183,9 +184,10 @@ class Trainer:
 
     # ── private helpers ───────────────────────────────────────────────────────
 
-    def _train_epoch(self, loader: DataLoader, epoch: int) -> float:
+    def _train_epoch(self, loader: DataLoader, epoch: int) -> Tuple[float, float]:
         self.model.train()
         total_loss = 0.0
+        total_grad_norm = 0.0
         n_batches = 0
 
         for batch in tqdm(loader, desc=f"Epoch {epoch}", leave=False):
@@ -200,20 +202,21 @@ class Trainer:
                     loss = self.loss_fn(logits, batch)
                 self.scaler.scale(loss).backward()
                 self.scaler.unscale_(self.optimizer)
-                nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+                grad_norm = nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
             else:
                 logits = self.model(batch)
                 loss = self.loss_fn(logits, batch)
                 loss.backward()
-                nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+                grad_norm = nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
                 self.optimizer.step()
 
             total_loss += loss.item()
+            total_grad_norm += grad_norm.item()
             n_batches += 1
 
-        return total_loss / max(n_batches, 1)
+        return total_loss / max(n_batches, 1), total_grad_norm / max(n_batches, 1)
 
     def _evaluate(
         self,

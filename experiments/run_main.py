@@ -11,6 +11,15 @@ Usage
 ─────
     cd recsys_debiasing_gpu
     python experiments/run_main.py --config configs/default.yaml
+
+    tmux new -s lm
+    conda activate lmcf
+    CUDA_VISIBLE_DEVICES=0 python train_v2.py
+
+    Detach: Ctrl+B then D — job keeps running
+    Re-attach later: tmux attach -t lm
+    conda deactivate
+
 """
 from __future__ import annotations
 import argparse
@@ -57,7 +66,7 @@ def resolve_device(cfg: ExperimentConfig) -> str:
 # Shared data setup
 # ─────────────────────────────────────────────────────────────────────────────
 
-def setup_data(cfg: ExperimentConfig) -> dict:
+def setup_data(cfg: ExperimentConfig, force_recompute: bool = False) -> dict:
     print("=" * 60)
     print("Loading ML-1M dataset ...")
     loader = ML1MLoader(
@@ -81,12 +90,13 @@ def setup_data(cfg: ExperimentConfig) -> dict:
     cache_dir = os.path.join(cfg.data.data_path, "cache")
     e_pop, e_trend = load_or_compute_exposures(
         train_seqs, cfg.debiasing.trend_window_days, cache_dir=cache_dir,
+        force=force_recompute,
     )
 
     scorer = FormulaIdentityScorer()
     load_or_compute_identity(
         scorer, train_seqs, loader.item_genres, e_trend,
-        cache_dir=cache_dir, scorer_tag="formula",
+        cache_dir=cache_dir, scorer_tag="formula", force=force_recompute,
     )
 
     user_groups = assign_user_groups(train_seqs, e_pop)
@@ -283,6 +293,8 @@ def _print_results(name: str, metrics: dict) -> None:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="configs/default.yaml")
+    parser.add_argument("--force-recompute", action="store_true",
+                        help="Delete and recompute all feature caches (e_pop, e_trend, alpha/beta)")
     args = parser.parse_args()
 
     cfg = ExperimentConfig.from_yaml(args.config)
@@ -293,7 +305,7 @@ def main():
     os.makedirs(experiment_dir, exist_ok=True)
     print(f"\nResults will be saved to: {experiment_dir}")
 
-    data = setup_data(cfg)
+    data = setup_data(cfg, force_recompute=args.force_recompute)
 
     # ── Run 1: Popularity baseline ────────────────────────────────────────────
     # print("\n[1/4] Running: popularity baseline")

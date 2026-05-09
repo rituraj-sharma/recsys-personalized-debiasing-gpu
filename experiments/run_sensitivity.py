@@ -51,7 +51,7 @@ def resolve_device(cfg: ExperimentConfig) -> None:
         cfg.training.pin_memory = False
 
 
-def setup_base_data(cfg: ExperimentConfig) -> dict:
+def setup_base_data(cfg: ExperimentConfig, force_recompute: bool = False) -> dict:
     """Load and split data; compute W-independent features (e_pop, α)."""
     print("=" * 60)
     print("Loading ML-1M dataset ...")
@@ -76,6 +76,7 @@ def setup_base_data(cfg: ExperimentConfig) -> dict:
     cache_dir = os.path.join(cfg.data.data_path, "cache")
     e_pop, _ = load_or_compute_exposures(
         train_seqs, trend_window_days=cfg.debiasing.trend_window_days, cache_dir=cache_dir,
+        force=force_recompute,
     )
     user_groups = assign_user_groups(train_seqs, e_pop)
 
@@ -93,6 +94,7 @@ def setup_base_data(cfg: ExperimentConfig) -> dict:
         test_gt=test_gt,
         e_pop=e_pop,
         user_groups=user_groups,
+        force_recompute=force_recompute,
     )
 
 
@@ -127,11 +129,13 @@ def run_sensitivity_variant(
     # W-specific e_trend and β(u)
     _, e_trend_w = load_or_compute_exposures(
         train_seqs, trend_window_days=window_days, cache_dir=cache_dir,
+        force=base_data.get("force_recompute", False),
     )
     scorer_w = FormulaIdentityScorer()
     load_or_compute_identity(
         scorer_w, train_seqs, loader_obj.item_genres, e_trend_w,
         cache_dir=cache_dir, scorer_tag=f"formula_W{window_days}",
+        force=base_data.get("force_recompute", False),
     )
 
     model = GRU4Rec(
@@ -230,6 +234,8 @@ def main():
         "--windows", nargs="+", type=int, default=DEFAULT_WINDOWS,
         help="Trend window sizes in days to sweep (default: 7 14 30 60)",
     )
+    parser.add_argument("--force-recompute", action="store_true",
+                        help="Delete and recompute all feature caches (e_pop, e_trend, alpha/beta)")
     args = parser.parse_args()
 
     cfg = ExperimentConfig.from_yaml(args.config)
@@ -240,7 +246,7 @@ def main():
     os.makedirs(experiment_dir, exist_ok=True)
     print(f"\nResults will be saved to: {experiment_dir}")
 
-    base_data = setup_base_data(cfg)
+    base_data = setup_base_data(cfg, force_recompute=args.force_recompute)
 
     print(f"\n{'='*60}")
     print(f"Sweeping W ∈ {args.windows} days")

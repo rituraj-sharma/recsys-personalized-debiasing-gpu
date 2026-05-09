@@ -212,7 +212,7 @@ def run_trial(
 # Shared data setup
 # ─────────────────────────────────────────────────────────────────────────────
 
-def setup_data(cfg: ExperimentConfig) -> dict:
+def setup_data(cfg: ExperimentConfig, force_recompute: bool = False) -> dict:
     print("=" * 60)
     print("Loading ML-1M dataset ...")
     loader = ML1MLoader(
@@ -236,11 +236,12 @@ def setup_data(cfg: ExperimentConfig) -> dict:
     cache_dir = os.path.join(cfg.data.data_path, "cache")
     e_pop, e_trend = load_or_compute_exposures(
         train_seqs, cfg.debiasing.trend_window_days, cache_dir=cache_dir,
+        force=force_recompute,
     )
     scorer = FormulaIdentityScorer()
     load_or_compute_identity(
         scorer, train_seqs, loader.item_genres, e_trend,
-        cache_dir=cache_dir, scorer_tag="formula",
+        cache_dir=cache_dir, scorer_tag="formula", force=force_recompute,
     )
     user_groups = assign_user_groups(train_seqs, e_pop)
 
@@ -397,6 +398,8 @@ def main():
     parser.add_argument("--n_trials",     type=int, default=30)
     parser.add_argument("--trial_epochs", type=int, default=20)
     parser.add_argument("--seed",         type=int, default=42)
+    parser.add_argument("--force-recompute", action="store_true",
+                        help="Delete and recompute all feature caches (e_pop, e_trend, alpha/beta)")
     parser.add_argument("--fast",         action="store_true",
                         help="Subsample users for faster tuning")
     parser.add_argument("--fast_ratio",   type=float, default=0.2)
@@ -410,7 +413,7 @@ def main():
     os.makedirs(study_dir, exist_ok=True)
     print(f"\nStudy results will be saved to: {study_dir}")
 
-    data = setup_data(base_cfg)
+    data = setup_data(base_cfg, force_recompute=args.force_recompute)
 
     if args.fast:
         tuning_data = subsample_data(data, args.fast_ratio, args.seed)
