@@ -52,15 +52,18 @@ class RunLogger:
         lr: float,
         epoch_time_sec: float,
         grad_norm: float = None,
+        **extra_stats,
     ) -> None:
         """Append one row to train_log.csv.  Safe to call after a crash (append mode)."""
         row: Dict = {
             "epoch": epoch,
             "train_loss": round(train_loss, 6),
             "grad_norm": round(grad_norm, 6) if grad_norm is not None else "",
-            "lr": lr,
-            "epoch_time_sec": round(epoch_time_sec, 1),
         }
+        for k, v in extra_stats.items():
+            row[k] = round(float(v), 6) if v is not None else ""
+        row["lr"] = lr
+        row["epoch_time_sec"] = round(epoch_time_sec, 1)
         for k, v in val_metrics.items():
             row[f"val_{k}"] = round(float(v), 6)
 

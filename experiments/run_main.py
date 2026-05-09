@@ -99,6 +99,10 @@ def setup_data(cfg: ExperimentConfig, force_recompute: bool = False) -> dict:
         cache_dir=cache_dir, scorer_tag="formula", force=force_recompute,
     )
 
+    from src.features.user_identity import LearnedIdentityScorer
+    learned_scorer = LearnedIdentityScorer(formula_scorer=scorer)
+    learned_scorer.compute(train_seqs, loader.item_genres, e_trend)
+
     user_groups = assign_user_groups(train_seqs, e_pop)
 
     return dict(
@@ -116,8 +120,10 @@ def setup_data(cfg: ExperimentConfig, force_recompute: bool = False) -> dict:
         e_pop=e_pop,
         e_trend=e_trend,
         scorer=scorer,
+        learned_scorer=learned_scorer,
         user_groups=user_groups,
     )
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -199,14 +205,40 @@ def run_gru4rec(
             use_alpha=use_alpha,
             use_beta=use_beta,
         )
+    elif loss_type == "personalized_learned":
+        loss_fn = PersonalizedIPSLoss(
+            e_pop=data["e_pop"],
+            e_trend=data["e_trend"],
+            identity_scorer=data["learned_scorer"],   # <-- note: learned_scorer
+            num_items=loader_obj.num_items,
+            max_weight=cfg.debiasing.max_weight,
+            use_alpha=use_alpha,
+            use_beta=use_beta,
+        )
     else:
         raise ValueError(f"Unknown loss_type: {loss_type}")
 
-    optimizer = torch.optim.Adam(
-        model.parameters(),
-        lr=cfg.training.lr,
-        weight_decay=cfg.training.weight_decay,
-    )
+    # optimizer = torch.optim.Adam(
+    #     model.parameters(),
+    #     lr=cfg.training.lr,
+    #     weight_decay=cfg.training.weight_decay,
+    # )
+
+    if loss_type == "personalized_learned":
+        optimizer = torch.optim.Adam(
+            [
+                {"params": model.parameters()},
+                {"params": loss_fn.identity_scorer.mlp.parameters()},
+            ],
+            lr=cfg.training.lr,
+            weight_decay=cfg.training.weight_decay,
+        )
+    else:
+        optimizer = torch.optim.Adam(
+            model.parameters(),
+            lr=cfg.training.lr,
+            weight_decay=cfg.training.weight_decay,
+        )
 
     train_loader = DataLoader(
         data["train_ds"], batch_size=cfg.training.batch_size,
@@ -308,20 +340,24 @@ def main():
     data = setup_data(cfg, force_recompute=args.force_recompute)
 
     # ── Run 1: Popularity baseline ────────────────────────────────────────────
-    # print("\n[1/4] Running: popularity baseline")
-    # run_popularity(cfg, data, experiment_dir)
+    print("\n[1/4] Running: popularity baseline")
+    run_popularity(cfg, data, experiment_dir)
 
     # ── Run 2: Plain GRU4Rec (CE loss) ───────────────────────────────────────
-    # print("\n[2/4] Running: gru4rec (CE loss)")
-    # run_gru4rec(cfg, data, experiment_dir, loss_type="ce", method_name="gru4rec_ce")
+    print("\n[2/4] Running: gru4rec (CE loss)")
+    run_gru4rec(cfg, data, experiment_dir, loss_type="ce", method_name="gru4rec_ce")
 
     # ── Run 3: GRU4Rec + Uniform IPS ─────────────────────────────────────────
-    # print("\n[3/4] Running: gru4rec + uniform IPS")
-    # run_gru4rec(cfg, data, experiment_dir, loss_type="ips", method_name="gru4rec_ips")
+    print("\n[3/4] Running: gru4rec + uniform IPS")
+    run_gru4rec(cfg, data, experiment_dir, loss_type="ips", method_name="gru4rec_ips")
 
     # ── Run 4: GRU4Rec + Personalised IPS (formula) ──────────────────────────
     print("\n[4/4] Running: gru4rec + personalised IPS (formula)")
     run_gru4rec(cfg, data, experiment_dir, loss_type="personalized", method_name="gru4rec_personalized")
+
+    # ── Run 5: GRU4Rec + Personalised IPS (learned MLP) ──────────────────────
+    print("\n[5/5] Running: gru4rec + personalised IPS (learned MLP)")
+    run_gru4rec(cfg, data, experiment_dir, loss_type="personalized_learned", run_name="gru4rec_pers_learned")
 
     write_comparison_summary(experiment_dir)
 

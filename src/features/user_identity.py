@@ -15,6 +15,9 @@ from abc import ABC, abstractmethod
 from collections import defaultdict
 from typing import Dict, List, Tuple
 
+import torch
+import torch.nn as nn
+
 from src.features.exposure import get_trend_exposure, EPSILON
 
 
@@ -111,16 +114,163 @@ class FormulaIdentityScorer(IdentityScorer):
         return total / len(seq)
 
 
-class LearnedIdentityScorer(IdentityScorer):
-    """PLACEHOLDER — not yet implemented. See original codebase for full spec."""
+class UserIdentityMLP(nn.Module):
+    """
+    Small MLP that maps user feature vector → (α, β).
 
-    def __init__(self) -> None:
-        raise NotImplementedError(
-            "LearnedIdentityScorer is not yet implemented."
+    Input features (4):
+        [0] entropy          — normalised Shannon entropy (same as formula α)
+        [1] avg_popularity   — mean e_pop of items in user history
+        [2] profile_size     — normalised number of interactions
+        [3] trending_corr    — mean e_trend (same as formula β)
+
+    Architecture:
+        Linear(4, 32) → ReLU → Linear(32, 2) → Sigmoid
+
+    Output:
+        [α, β] both in (0, 1)
+    """
+    def __init__(self, hidden_dim: int = 32) -> None:
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(4, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, 2),
+            nn.Sigmoid(),
         )
 
-    def compute(self, *args, **kwargs) -> "LearnedIdentityScorer":
-        raise NotImplementedError
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Parameters
+        ----------
+        x : [B, 4]  batch of user feature vectors
+
+        Returns
+        -------
+        [B, 2]  where [:, 0] = α,  [:, 1] = β
+        """
+        return self.net(x)
+
+
+class LearnedIdentityScorer(IdentityScorer):
+    """
+    MLP-based identity scorer jointly trained with the sequential model.
+
+    Key difference from FormulaIdentityScorer:
+        - α and β are NOT fixed — they change every training step
+          as the MLP weights update via backprop
+        - is_learnable() returns True → Trainer adds MLP params to optimizer
+
+    Usage:
+        scorer = LearnedIdentityScorer(formula_scorer=existing_formula_scorer)
+        scorer.compute(train_seqs, item_genres, e_trend)
+        # scorer.mlp  → the nn.Module (pass to optimizer)
+    """
+
+    def __init__(
+        self,
+        hidden_dim: int = 32,
+        formula_scorer: "FormulaIdentityScorer | None" = None,
+    ) -> None:
+        super().__init__()
+        self.mlp: "UserIdentityMLP | None" = None
+        self.hidden_dim = hidden_dim
+        self._features: Dict[int, torch.Tensor] = {}
+        # reuse an already-computed formula scorer to avoid recomputing
+        self._formula_scorer: "FormulaIdentityScorer | None" = formula_scorer
+
+    def compute(
+        self,
+        train_seqs: Dict[int, List[Tuple[int, int]]],
+        item_genres: Dict[int, List[str]],
+        e_trend: Dict[int, Dict[int, float]],
+    ) -> "LearnedIdentityScorer":
+        """
+        Precompute the 4 input features for every user.
+        Instantiate the MLP (weights are random at this point —
+        they are learned during training via backprop).
+        """
+        if self._formula_scorer is None:
+            self._formula_scorer = FormulaIdentityScorer()
+            self._formula_scorer.compute(train_seqs, item_genres, e_trend)
+
+        # Compute e_pop per item for avg_popularity feature
+        from src.features.exposure import compute_pop_exposure
+        e_pop = compute_pop_exposure(train_seqs)
+
+        # Max interactions for profile_size normalisation
+        profile_sizes = [len(seq) for seq in train_seqs.values()]
+        max_profile = max(profile_sizes) if profile_sizes else 1
+
+        for user_idx, seq in train_seqs.items():
+            alpha_formula, beta_formula = self._formula_scorer.get(user_idx)
+
+            # avg_popularity: mean e_pop of items in user history
+            pop_vals = [e_pop.get(item, EPSILON) for item, _ in seq]
+            avg_pop = sum(pop_vals) / len(pop_vals) if pop_vals else 0.0
+
+            # profile_size: normalised [0, 1]
+            profile_size = len(seq) / max_profile
+
+            # Feature vector: [entropy, avg_pop, profile_size, trending_corr]
+            feat = torch.tensor(
+                [alpha_formula, avg_pop, profile_size, beta_formula],
+                dtype=torch.float32,
+            )
+            self._features[user_idx] = feat
+
+        # Populate _scores with formula values for interface compatibility
+        # (used by PersonalizedIPSLoss.__init__ to init alpha/beta buffers)
+        self._scores = dict(self._formula_scorer._scores)
+
+        # Instantiate MLP — weights are random, learned during training
+        self.mlp = UserIdentityMLP(hidden_dim=self.hidden_dim)
+
+        return self
+
+    def get_features(self, user_idx: int) -> torch.Tensor:
+        """
+        Return feature vector for a user.
+        Falls back to zero vector for unseen users.
+        """
+        return self._features.get(
+            user_idx, torch.zeros(4, dtype=torch.float32)
+        )
+
+    def get_feature_batch(
+        self,
+        user_ids: List[int],
+        device: torch.device,
+    ) -> torch.Tensor:
+        """
+        Return feature matrix for a batch of users.
+
+        Parameters
+        ----------
+        user_ids : list of int, length B
+        device   : torch device
+
+        Returns
+        -------
+        [B, 4] tensor on the correct device
+        """
+        feats = torch.stack(
+            [self.get_features(u) for u in user_ids], dim=0
+        )
+        return feats.to(device)
+
+    def get(self, user_idx: int) -> Tuple[float, float]:
+        """
+        Return current (α, β) from MLP forward pass.
+        Used only when MLP is not yet on a device (e.g. during caching).
+        Falls back to formula scores.
+        """
+        # During actual training, _compute_weights() calls get_feature_batch()
+        # and does a proper batched forward pass. This method is kept for
+        # interface compatibility only.
+        if self._formula_scorer is not None:
+            return self._formula_scorer.get(user_idx)
+        return (0.5, 0.5)
 
     def is_learnable(self) -> bool:
         return True

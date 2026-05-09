@@ -105,7 +105,7 @@ class Trainer:
 
         for epoch in range(start_epoch, epochs + 1):
             t0 = time.time()
-            train_loss, avg_grad_norm = self._train_epoch(train_loader, epoch)
+            train_loss, avg_grad_norm, avg_mlp_grad_norm = self._train_epoch(train_loader, epoch)
             val_metrics = self._evaluate(val_loader, seen_items_train, val_ground_truths)
             epoch_time = time.time() - t0
 
@@ -113,9 +113,16 @@ class Trainer:
             self.scheduler.step(ndcg)
             current_lr = self.optimizer.param_groups[0]["lr"]
 
+            extra = {}
+            if avg_mlp_grad_norm > 0:
+                extra["mlp_grad_norm"] = avg_mlp_grad_norm
+            extra.update(self._mlp_epoch_stats())
+            if hasattr(self.loss_fn, "get_epoch_weight_stats"):
+                extra.update(self.loss_fn.get_epoch_weight_stats())
+
             if self.logger:
                 self.logger.log_epoch(epoch, train_loss, val_metrics, current_lr, epoch_time,
-                                      grad_norm=avg_grad_norm)
+                                      grad_norm=avg_grad_norm, **extra)
 
             tqdm.write(
                 f"Epoch {epoch:3d} | loss {train_loss:.4f} | "
@@ -184,14 +191,17 @@ class Trainer:
 
     # ── private helpers ───────────────────────────────────────────────────────
 
-    def _train_epoch(self, loader: DataLoader, epoch: int) -> Tuple[float, float]:
+    def _train_epoch(self, loader: DataLoader, epoch: int) -> Tuple[float, float, float]:
         self.model.train()
         total_loss = 0.0
         total_grad_norm = 0.0
+        total_mlp_grad_norm = 0.0
         n_batches = 0
 
+        if hasattr(self.loss_fn, "reset_epoch_stats"):
+            self.loss_fn.reset_epoch_stats()
+
         for batch in tqdm(loader, desc=f"Epoch {epoch}", leave=False):
-            # non_blocking pairs with pin_memory=True on the DataLoader
             batch = {k: v.to(self.device, non_blocking=True) for k, v in batch.items()}
 
             self.optimizer.zero_grad()
@@ -203,6 +213,7 @@ class Trainer:
                 self.scaler.scale(loss).backward()
                 self.scaler.unscale_(self.optimizer)
                 grad_norm = nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+                mlp_grad_norm = self._clip_mlp_grads()
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
             else:
@@ -210,13 +221,40 @@ class Trainer:
                 loss = self.loss_fn(logits, batch)
                 loss.backward()
                 grad_norm = nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+                mlp_grad_norm = self._clip_mlp_grads()
                 self.optimizer.step()
 
             total_loss += loss.item()
             total_grad_norm += grad_norm.item()
+            total_mlp_grad_norm += mlp_grad_norm
             n_batches += 1
 
-        return total_loss / max(n_batches, 1), total_grad_norm / max(n_batches, 1)
+        n = max(n_batches, 1)
+        return total_loss / n, total_grad_norm / n, total_mlp_grad_norm / n
+
+    def _clip_mlp_grads(self) -> float:
+        scorer = getattr(self.loss_fn, "identity_scorer", None)
+        if scorer is not None and scorer.is_learnable() and scorer.mlp is not None:
+            return nn.utils.clip_grad_norm_(
+                scorer.mlp.parameters(), self.max_grad_norm
+            ).item()
+        return 0.0
+
+    def _mlp_epoch_stats(self) -> Dict[str, float]:
+        scorer = getattr(self.loss_fn, "identity_scorer", None)
+        if scorer is None or not scorer.is_learnable() or not scorer._features:
+            return {}
+        all_feats = torch.stack(list(scorer._features.values())).to(self.device)
+        with torch.no_grad():
+            ab = scorer.mlp(all_feats)   # [N_users, 2]
+        weight_norm = sum(p.norm() ** 2 for p in scorer.mlp.parameters()).sqrt().item()
+        return {
+            "mlp_alpha_mean": ab[:, 0].mean().item(),
+            "mlp_alpha_std":  ab[:, 0].std().item(),
+            "mlp_beta_mean":  ab[:, 1].mean().item(),
+            "mlp_beta_std":   ab[:, 1].std().item(),
+            "mlp_weight_norm": weight_norm,
+        }
 
     def _evaluate(
         self,
