@@ -8,7 +8,7 @@ We give each user two scores. An **explorer score α(u)**, from the entropy of t
 
 We also built a variant where a small **MLP** learns α and β end-to-end instead of computing them from a formula.
 
-Course project at IIIT Bangalore, 2026. Full write-up in [`docs/FinalReport.pdf`](docs/FinalReport.pdf); slides in [`docs/FinalPresentation.pdf`](docs/FinalPresentation.pptx).
+Course project at IIIT Bangalore, 2026. Full write-up in [`docs/FinalReport.pdf`](docs/FinalReport.pdf); slides in [`docs/FinalPresentation.pdf`](docs/FinalPresentation.pdf).
 
 ---
 
